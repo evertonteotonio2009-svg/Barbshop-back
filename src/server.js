@@ -1,0 +1,202 @@
+if(process.env.NODE_ENV === "production"){
+    require("dotenv").config({
+        path:".env.production"
+    })
+    
+}else{
+    require("dotenv").config({
+        path:".env"
+    })
+
+}
+
+
+
+const express = require("express")
+const cors = require("cors")
+const db = require("./config/database")
+
+const jwt = require("jsonwebtoken")
+const app = express()
+const auth = require("./middleware/auth")
+const bcrypt = require("bcrypt")
+
+const PORT = 3001
+
+
+
+app.use(express.json())
+app.use(cors())
+
+app.get("/",(req,res)=>{
+    res.json({
+        mensagem:"API funcionando"
+    })
+})
+
+
+app.post("/register",async(req,res)=>{
+
+    try {
+        
+        const {nome, email, senha} = req.body
+
+        if(!nome || !email || !senha){
+            return res.status(400).json({
+                mensagem:"Preencha todos os campos"
+            })
+        }
+
+        const [usuarioExistente] = await db.query(
+            "SELECT id from usuario WHERE email = ?",
+            [email]
+        )
+
+        if(usuarioExistente.length > 0){
+            return res.status(400).json({
+                mensagem:"E-mail já cadastrado"
+            })
+        }
+
+        const senhaHash = await bcrypt.hash(senha,10)
+
+        await db.query(
+            "INSERT INTO usuario(nome,email,senha)VALUES(?,?,?)",
+            [nome,email,senhaHash]
+        )
+
+        res.status(201).json({
+            mensagem:"Usuario cadastrado com sucesso"
+        })
+
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({
+            mensagem:"Erro interno"
+        })
+    }
+})
+
+app.post("/login", async (req, res)=>{
+    const {email,senha} = req.body
+
+    try {
+        const[usuarios] = await db.query(
+            "SELECT * FROM usuario WHERE email = ?",
+            [email]
+        )
+
+        if(usuarios.length == 0){
+            return res.status(401).json({
+                mensagem:"Email ou senha inválidos"
+            })
+        }
+
+        const usuario = usuarios[0]
+
+        const senhaValida = await bcrypt.compare(
+            senha,
+            usuario.senha
+        )
+
+        if(!senhaValida){
+            return res.status(401).json({
+                mensagem:"Senha inválida"
+            })
+        }
+
+        
+
+
+        const token = jwt.sign(
+            {
+                id: usuario.id,
+                email: usuario.email
+            },
+            process.env.JWT_SECRET,
+            {
+                expiresIn: '1h'
+            }
+        )
+
+
+
+        res.json({
+            mensagem:"Login realizado",
+            token
+        })
+
+
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({
+            mensagem:"Erro no login"
+        })
+    }
+})
+
+app.get("/produtos",auth, async (req,res)=>{
+    try {
+        const [produtos] = await db.query(
+            "SELECT * from produto"
+        )
+        res.json(produtos)
+    } catch (error) {
+        console.log(error)
+    }
+})
+
+app.post("/produtos", auth, async (req, res) => {
+    try {
+        const { nome, data, horário } = req.body;
+
+        const sql = `
+            INSERT INTO produto (nome, data, horário)
+            VALUES (?, ?, ?, ?)
+        `;
+
+        const [result] = await db.execute(sql, [
+            nome,
+            data,
+            horário
+        ]);
+
+        res.status(201).json({
+            mensagem: "Agendamento agendado com sucesso",
+            produto: {
+                id: result.insertId,
+                nome,
+                data,
+                horário
+            }
+        });
+
+    } catch (error) {
+        console.error(error);
+
+        res.status(500).json({
+            mensagem: "Erro ao agendar"
+        });
+    }
+});
+
+
+app.delete("/produtos/:id",async(req,res)=>{
+    try {
+        const {id} = req.params
+
+        await db.query("DELETE FROM agendamento WHERE id = ?",[id])
+
+        res.json({mensagem:"Angendamento deletado com sucesso"})
+
+    } catch (error) {
+        console.log(error)
+        res.json({
+            erro: "Erro ao deletar o agendamento"
+        })
+    }
+})
+
+app.listen(PORT, ()=>{
+    console.log("Servidor rodando na porta 3001")
+})
